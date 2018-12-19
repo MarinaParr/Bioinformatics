@@ -2,8 +2,17 @@ import os
 import zipfile
 import csv
 import re
+import argparse
 
-fdr = 1
+parser = argparse.ArgumentParser(description='')
+parser.add_argument('--cutoff', default=1,
+                    help='Shows the cut-off for the FDR value. Metabolites with FDR >= cut-off are not shown. Optional. Float in [0:1].')
+parser.add_argument('--property', default=str(),
+                    help='Shows what property of metabolite to highlight. Optional. Can be "fdr", "msm", "intensity".')
+
+args = parser.parse_args()
+property = args.property
+cutoff = args.cutoff
 
 
 def hmdb_kegg():# parsing hmdb, extracting corresponding kegg_ids, writing to 'HMDB_KEGG.csv'
@@ -14,7 +23,7 @@ def hmdb_kegg():# parsing hmdb, extracting corresponding kegg_ids, writing to 'H
             hmdb_accession, kegg_id = str(), str()
             for line in f:
                 line = line.decode('utf-8')
-                if '<accession>' in line:
+                if line.startswith('  <accession>'):
                     hmdb_accession = re.search('<accession>(.*)</accession>', line).group(1)
                 if '<kegg_id>' in line:
                     kegg_id = re.search('<kegg_id>(.*)</kegg_id>', line).group(1)
@@ -78,10 +87,14 @@ def annotated_metabolites(): #should be changed to interaction with the python-c
         accessions = dict()
         for row in table:
             if len(row) == 13 and row[0] != 'group':
-                #if float(row[7]) <= fdr:
-                for accession in row[12].split(','):
-                    accessions[accession.replace(' ', '')] = [row[5], row[6], row[7]] #mz, msm, fdr
-        print(len(accessions))
+                if float(row[7]) <= cutoff:
+                    for accession in row[12].split(','):
+                        color = 1
+                        if property == 'msm':
+                            color = row[6]
+                        if property == 'fdr':
+                            color = row[7]
+                        accessions[accession.replace(' ', '')] = color
         return accessions
 
 
@@ -92,12 +105,13 @@ def main():
         kegg_coordinates = two_columns_tsv_to_dict('kegg_coordinates.csv') #here second row contains x,y coordinates
         f = open("data_for_ili.csv", "w")
         f.write('kegg_id,X,Y,Z,radius,dummy' + '\n')
-        for accession in annotated_metabolites():
+        annotation = annotated_metabolites()
+        for accession in annotation:
             if accession in hmdb_kegg:
                 if hmdb_kegg[accession] in kegg_coordinates:
-                    f.write(hmdb_kegg[accession] + "," + kegg_coordinates[hmdb_kegg[accession]] + ',,' + '30,1' + "\n")
+                    f.write(hmdb_kegg[accession] + "," + kegg_coordinates[hmdb_kegg[accession]] + ',,' + '10,' + str(annotation[accession]) + "\n")
         f.close()
-        print('Ready. Files "data_for_ili.csv" and KEGG_EC_metabolitemap_bw.png () can be drag-and-dropped to https://ili.embl.de')
+        print('Ready. Files "data_for_ili.csv" and KEGG_EC_metabolitemap_bw.png (1320x790pi) can be drag-and-dropped to https://ili.embl.de')
 
 
 main()
