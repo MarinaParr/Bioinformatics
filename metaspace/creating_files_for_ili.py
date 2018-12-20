@@ -6,9 +6,9 @@ import argparse
 
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--cutoff', default=1,
-                    help='Shows the cut-off for the FDR value. Metabolites with FDR >= cut-off are not shown. Optional. Float in [0:1].')
+                    help='The cut-off for the FDR value. Metabolites with FDR >= cut-off are not shown. Optional. Float in [0,1].')
 parser.add_argument('--property', default=str(),
-                    help='Shows what property of metabolite to highlight. Optional. Can be "fdr", "msm", "intensity".')
+                    help='What property of metabolite to highlight. Optional. Can be "fdr", "msm".') #'intensity should be added
 
 args = parser.parse_args()
 property = args.property
@@ -85,17 +85,19 @@ def annotated_metabolites(): #should be changed to interaction with the python-c
     with open('metaspace_annotations.csv') as csvfile:
         table = csv.reader(csvfile, delimiter=',')
         accessions = dict()
+        isomer_group = 0
         for row in table:
+            isomer_group += 1
             if len(row) == 13 and row[0] != 'group':
                 if float(row[7]) <= cutoff:
                     for accession in row[12].split(','):
-                        color = 1
-                        if property == 'msm':
-                            color = row[6]
-                        if property == 'fdr':
-                            color = row[7]
-                        accessions[accession.replace(' ', '')] = color
-        return accessions
+                        property_float = 1
+                        if property == 'msm': # [0,1]
+                            property_float = float(row[6])
+                        if property == 'fdr': # usually [0,0.1], so *10 for displaying as radius
+                            property_float = float(row[7])*10
+                        accessions[accession.replace(' ', '')] = [property_float, isomer_group]
+        return accessions, isomer_group #isomer_group now means the number of isomer groups
 
 
 def main():
@@ -106,10 +108,16 @@ def main():
         f = open("data_for_ili.csv", "w")
         f.write('kegg_id,X,Y,Z,radius,dummy' + '\n')
         annotation = annotated_metabolites()
-        for accession in annotation:
+        values = annotation[0]
+        isomer_groups = annotation[1]
+        for accession in values:
             if accession in hmdb_kegg:
                 if hmdb_kegg[accession] in kegg_coordinates:
-                    f.write(hmdb_kegg[accession] + "," + kegg_coordinates[hmdb_kegg[accession]] + ',,' + '10,' + str(annotation[accession]) + "\n")
+                    kegg_id = hmdb_kegg[accession]
+                    x_y = kegg_coordinates[hmdb_kegg[accession]]
+                    radius = values[accession][0]*10 #reflects the property
+                    color = values[accession][1]/isomer_groups #Zero division!Check!
+                    f.write(kegg_id + "," + x_y + ',,' + str(radius) + ',' + str(color) + "\n")
         f.close()
         print('Ready. Files "data_for_ili.csv" and KEGG_EC_metabolitemap_bw.png (1320x790pi) can be drag-and-dropped to https://ili.embl.de')
 
