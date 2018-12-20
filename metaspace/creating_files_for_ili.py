@@ -7,11 +7,11 @@ import argparse
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--cutoff', default=1,
                     help='The cut-off for the FDR value. Metabolites with FDR >= cut-off are not shown. Optional. Float in [0,1].')
-parser.add_argument('--property', default=str(),
-                    help='What property of metabolite to highlight. Optional. Can be "fdr", "msm".') #'intensity should be added
+parser.add_argument('--property_for_radius', default=str(),
+                    help='What property of metabolite to display as radius. Optional. Can be "fdr", "msm".') #'intensity should be added
 
 args = parser.parse_args()
-property = args.property
+property_for_radius = args.property_for_radius
 cutoff = args.cutoff
 
 
@@ -92,9 +92,9 @@ def annotated_metabolites(): #should be changed to interaction with the python-c
                 if float(row[7]) <= cutoff:
                     for accession in row[12].split(','):
                         property_float = 1
-                        if property == 'msm': # [0,1]
+                        if property_for_radius == 'msm': # [0,1]
                             property_float = float(row[6])
-                        if property == 'fdr': # usually [0,0.1], so *10 for displaying as radius
+                        if property_for_radius == 'fdr': # usually [0,0.1], so *10 for displaying as radius
                             property_float = float(row[7])*10
                         accessions[accession.replace(' ', '')] = [property_float, isomer_group]
         return accessions, isomer_group #isomer_group now means the number of isomer groups
