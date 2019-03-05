@@ -2,31 +2,8 @@ import os
 import zipfile
 import csv
 import re
-import argparse
-import getpass
 import pandas as pd
 from sm_annotation_utils import SMInstance
-
-
-parser = argparse.ArgumentParser(description='')
-parser.add_argument('name', default=str(), type=str,
-                    help='Name of the dataset in METASPACE. For example: "24062018_VS_denseII_A_B_NEDC_9AA_CHCA_DHB_D"')
-parser.add_argument('--cutoff', default=1, type=float,
-                    help='The cut-off for the FDR value. Metabolites with FDR >= cut-off are not shown. Optional. Float in [0,1].')
-parser.add_argument('--property_for_radius', default=str(), type=str,
-                    help='What property of metabolite to display as radius. Optional. Can be "fdr", "msm", "intensity".')
-
-email = input('Email: ')
-password = getpass.getpass('Password: ') #For public datasets it is not needed. Make it optional!
-
-args = parser.parse_args()
-ds_name = args.name
-property_for_radius = args.property_for_radius
-cutoff = args.cutoff
-
-
-sm = SMInstance()
-sm.login(email, password)
 
 
 def hmdb_kegg():# parsing hmdb, extracting corresponding kegg_ids, writing to 'HMDB_KEGG.csv'
@@ -55,9 +32,11 @@ def kegg_coordinates(): #parsing 'KEGG PATHWAY: Metabolic pathways - Reference p
     f2 = open('KEGG PATHWAY: Metabolic pathways - Reference pathway.html', 'r')
     for line in f2.readlines():
         if line.startswith('<area shape="circle"'):
-            coordinates = re.search('coords="(.*),2"', line).group(1)  # we need only two first coordinates
-            title = re.search('title="(.*)"', line).group(1)[0:6]  # kegg_ids are 6-letters
-            f1.write(title + '\t' + coordinates + "\n")
+            coordinates = re.search('coords="(.*),7"', line).group(1)  # we need only two first coordinates
+            title = re.search('title="(.*)"', line).group(1)
+            kegg_id = title[0:6]  # kegg_ids are 6-letters
+            name = title[7:].split('"')[0].replace('(', '').replace(")", '')
+            f1.write(kegg_id + '\t' + coordinates + "\t" +name + "\n")
     f1.close()
     f2.close()
     print('File "kegg_coordinates.csv" is created.')
@@ -67,10 +46,11 @@ def check_files_existance(): #check if all necessary files are in wd and creates
     print('Checking files in the directory')
     files = os.listdir(os.getcwd())
     ready_to_run = True
-    if 'metaspace_annotations.csv' not in files:
-        print("No input from METASPACE. File 'metaspace_annotations.csv' is expected. The program will stop.")
-        ready_to_run = False
-    if ready_to_run == True:
+    #This part is for when you manually download data from METASPACE
+    #if 'metaspace_annotations.csv' not in files:
+    #    print("No input from METASPACE. File 'metaspace_annotations.csv' is expected. The program will stop.")
+    #    ready_to_run = False
+    if ready_to_run:
         if 'HMDB_KEGG.csv' not in files:
             if 'hmdb_metabolites.zip' in files:
                 hmdb_kegg()
@@ -91,7 +71,7 @@ def two_columns_tsv_to_dict(tsv_file): #reads tsv_file with two columns into dic
     with open(tsv_file) as csvfile:
         table = csv.reader(csvfile, delimiter='\t')
         for row in table:
-            d[row[0]] = row[1]
+            d[row[0]] = row[1:]
     return d
 
 
@@ -118,47 +98,57 @@ def annotated_metabolites(): #should be changed to interaction with the python-c
 
 
 #This function uses python-client for METASPACE
-def annotated_metabolites():
-    df = pd.DataFrame(sm.dataset(name=ds_name).results(database="HMDB-v4"),
-                      columns=['msm', 'moc', 'rhoSpatial', 'rhoSpectral', 'fdr', 'mz', 'moleculeNames', 'moleculeIds',
-                               'intensity'])
+def annotated_metabolites(df, cutoff, property_for_radius):
     accessions = dict()
-    isomer_group = 0
     for index, row in df.iterrows():
-        isomer_group += 1
         if row["fdr"] <= cutoff:
-            for accession in row["moleculeIds"]:
-                property_float = 1
-                if property_for_radius == 'msm':  # [0,1]
-                    property_float = row["msm"]
-                if property_for_radius == 'fdr':  # usually [0,0.1], so *10 for displaying as radius
-                    property_float = row["fdr"] * 10
-                if property_for_radius == 'intensity':
-                    property_float = row["intensity"] / 10000 # normalising to 0:1
-                accessions[accession.replace(' ', '')] = [property_float, isomer_group]
-    return accessions, isomer_group  # isomer_group now means the number of isomer groups
+            formula = list(index)[0]
+            if formula not in accessions:
+                accessions[formula] = [row["fdr"], row["msm"], row["intensity"], row["moleculeIds"]]
+            else:
+                if accessions[formula][0] > row["fdr"] and accessions[formula][1] < row["msm"]:
+                    accessions[formula] = [row["fdr"], row["msm"], row["intensity"], row["moleculeIds"]]
+    metabolites = dict()
+    isomer_group = 1
+    for formula in accessions:
+        for hmdb_id in accessions[formula][3]:
+            property_float = 1
+            if property_for_radius == 'msm':  # [0,1]
+                property_float = accessions[formula][1]
+            if property_for_radius == 'fdr':  # usually [0,0.1], so *10 for displaying as radius
+                property_float = accessions[formula][0] * 10
+            if property_for_radius == 'intensity':
+                property_float = accessions[formula][2] / 10000 # normalising to 0:1
+            metabolites[hmdb_id] = [property_float, isomer_group, accessions[formula][0], accessions[formula][1], formula]
+        isomer_group += 1
+    return metabolites, isomer_group  # isomer_group here means the number of isomer groups + 1
 
 
-def main():
+def main(email, password, names, cutoff, property_for_radius):
+    sm = SMInstance()
+    sm.login(email, password)
+    ds_names = names.split(',')
     if check_files_existance():
         print('All necessary files exist. Mapping starts.')
-        hmdb_kegg = two_columns_tsv_to_dict('HMDB_KEGG.csv')
-        kegg_coordinates = two_columns_tsv_to_dict('kegg_coordinates.csv') #here second row contains x,y coordinates
-        f = open("data_for_ili.csv", "w")
-        f.write('kegg_id,X,Y,Z,radius,dummy' + '\n')
-        annotation = annotated_metabolites()
-        values = annotation[0]
-        isomer_groups = annotation[1]
-        for accession in values:
-            if accession in hmdb_kegg:
-                if hmdb_kegg[accession] in kegg_coordinates:
-                    kegg_id = hmdb_kegg[accession]
-                    x_y = kegg_coordinates[hmdb_kegg[accession]]
-                    radius = values[accession][0]*10 #reflects the property
-                    color = values[accession][1]/isomer_groups #Zero division!Check!
-                    f.write(kegg_id + "," + x_y + ',,' + str(radius) + ',' + str(color) + "\n")
-        f.close()
-        print('Ready. Files "data_for_ili.csv" and KEGG_EC_metabolitemap_bw.png (1320x790pi) can be drag-and-dropped to https://ili.embl.de')
-
-
-main()
+        hmdb_kegg_d = two_columns_tsv_to_dict('HMDB_KEGG.csv')
+        kegg_coordinates_d = two_columns_tsv_to_dict('kegg_coordinates.csv')
+        for ds_name in ds_names:
+            f = open(ds_name + "_data_for_ili.csv", "w")
+            f.write('kegg_name,X,Y,Z,radius,group_of_isomers' + '\n')
+            df = pd.DataFrame(sm.dataset(name=ds_name).results(database="HMDB-v4"),columns=['msm', 'moc', 'rhoSpatial', 'rhoSpectral', 'fdr', 'mz', 'moleculeNames','moleculeIds','intensity'])
+            annotation = annotated_metabolites(df,cutoff, property_for_radius)
+            values = annotation[0]
+            isomer_groups = annotation[1] - 1
+            for accession in values:
+                if accession in hmdb_kegg_d:
+                    if hmdb_kegg_d[accession][0] in kegg_coordinates_d:
+                        kegg_id = hmdb_kegg_d[accession][0]
+                        x_y = kegg_coordinates_d[kegg_id][0]
+                        name = kegg_coordinates_d[kegg_id][1]
+                        name = name.replace(',', '_')
+                        radius = values[accession][0]*10 #reflects the property
+                        color = values[accession][1]/isomer_groups
+                        #formula = values[accession][4]
+                        f.write(name + "," + x_y + ',,' + str(radius) + ',' + str(color) + "\n")
+            f.close()
+        print('Ready. Files _data_for_ili.csv and KEGG_EC_metabolitemap_bw.png can be drag-and-dropped to ili.embl.de')
